@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jeu de Combat Gestuel - 2 Joueurs Local</title>
+    
+    <!-- Inclusion des scripts officiels MediaPipe pour la détection des mains -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background-color: #1a1a2e;
+            color: #e0e0e0;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        h1 {
+            color: #00bcd4;
+            margin-bottom: 10px;
+            text-shadow: 0 0 8px rgba(0, 188, 212, 0.7);
+        }
+
+        #game-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #2c2c54;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 0 25px rgba(0, 188, 212, 0.4);
+            width: 100%;
+            max-width: 900px;
+            border: 1px solid #00bcd4;
+        }
+
+        .instructions {
+            background-color: #1f1f3a;
+            padding: 12px 20px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            border-left: 5px solid #ffeb3b;
+            font-size: 0.95em;
+            text-align: center;
+            width: 90%;
+        }
+
+        /* Conteneur vidéo avec effet miroir et lignes de séparation de zone */
+        .video-wrapper {
+            position: relative;
+            width: 100%;
+            max-width: 640px;
+            height: 480px;
+            margin-bottom: 20px;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 3px solid #00bcd4;
+            transform: scaleX(-1); /* Effet miroir */
+        }
+
+        #webcam-feed {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            background-color: #000;
+        }
+
+        /* Ligne centrale virtuelle pour séparer visuellement les joueurs */
+        .separator-line {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            width: 2px;
+            height: 100%;
+            background: rgba(255, 235, 59, 0.3);
+            border-style: dashed;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        #fighters-area {
+            display: flex;
+            justify-content: space-around;
+            width: 100%;
+            gap: 20px;
+        }
+
+        .fighter {
+            text-align: center;
+            width: 45%;
+            padding: 15px;
+            border: 1px solid #5d5d81;
+            border-radius: 8px;
+            background-color: #3e3e70;
+            transition: background-color 0.2s;
+        }
+
+        .fighter h2 {
+            margin-top: 0;
+        }
+
+        #player1-info h2 { color: #00bcd4; }
+        #player2-info h2 { color: #ff5722; }
+
+        .health-bar-container {
+            width: 100%;
+            height: 25px;
+            background-color: #5d5d81;
+            border-radius: 12px;
+            margin: 15px 0;
+            overflow: hidden;
+            border: 2px solid #a7bce2;
+        }
+
+        .health-bar {
+            height: 100%;
+            width: 100%;
+            background-color: #4CAF50;
+            transition: width 0.2s ease-in-out;
+        }
+
+        #game-status {
+            margin-top: 20px;
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #ffeb3b;
+            text-shadow: 0 0 5px rgba(255, 235, 59, 0.5);
+            text-align: center;
+            min-height: 40px;
+        }
+
+        .gesture-indicator {
+            font-weight: bold;
+            font-size: 0.9em;
+            color: #a0a0c0;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Combat Gestuel - Face à Face</h1>
+    
+    <div id="game-container">
+        <div class="instructions">
+            <strong>Mode 2 Joueurs :</strong> Placez-vous à gauche et à droite de la caméra.<br>
+            Faites un <b>poing ✊</b> puis <b>ouvrez la main 🖐️</b> pour frapper votre adversaire en face !
+        </div>
+
+        <div class="video-wrapper">
+            <video id="webcam-feed" autoplay playsinline></video>
+            <div class="separator-line"></div>
+        </div>
+
+        <div id="fighters-area">
+            <div id="player1-info" class="fighter">
+                <h2>Joueur 1 (Gauche)</h2>
+                <div class="health-bar-container"><div id="health1" class="health-bar"></div></div>
+                <p id="gesture-p1" class="gesture-indicator">En attente...</p>
+            </div>
+            <div id="player2-info" class="fighter">
+                <h2>Joueur 2 (Droite)</h2>
+                <div class="health-bar-container"><div id="health2" class="health-bar"></div></div>
+                <p id="gesture-p2" class="gesture-indicator">En attente...</p>
+            </div>
+        </div>
+
+        <div id="game-status">Initialisation du système de suivi des mains...</div>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('webcam-feed');
+        const healthBar1 = document.getElementById('health1');
+        const healthBar2 = document.getElementById('health2');
+        const gameStatus = document.getElementById('game-status');
+        const gestureP1 = document.getElementById('gesture-p1');
+        const gestureP2 = document.getElementById('gesture-p2');
+
+        let player1Health = 100;
+        let player2Health = 100;
+        let gameActive = true;
+
+        // Suivi des états des mains pour les deux côtés
+        // En raison du scaleX(-1) sur la vidéo, le côté gauche de l'écran correspond physiquement à x > 0.5 (et inversement)
+        let p1HandWasClosed = false;
+        let p2HandWasClosed = false;
+
+        function updateHealthBars() {
+            healthBar1.style.width = `${player1Health}%`;
+            healthBar2.style.width = `${player2Health}%`;
+
+            healthBar1.style.backgroundColor = player1Health > 60 ? '#4CAF50' : (player1Health > 30 ? '#ffeb3b' : '#f44336');
+            healthBar2.style.backgroundColor = player2Health > 60 ? '#4CAF50' : (player2Health > 30 ? '#ffeb3b' : '#f44336');
+        }
+
+        function triggerAttack(attacker) {
+            if (!gameActive) return;
+
+            if (attacker === 1) {
+                player2Health -= 15;
+                gameStatus.textContent = "💥 Joueur 1 (Gauche) inflige un dégât au Joueur 2 !";
+                if (player2Health <= 0) {
+                    player2Health = 0;
+                    endGame("🏆 Victoire du Joueur 1 (Gauche) !");
+                }
+            } else {
+                player1Health -= 15;
+                gameStatus.textContent = "⚡ Joueur 2 (Droite) inflige un dégât au Joueur 1 !";
+                if (player1Health <= 0) {
+                    player1Health = 0;
+                    endGame("🏆 Victoire du Joueur 2 (Droite) !");
+                }
+            }
+            updateHealthBars();
+        }
+
+        function endGame(message) {
+            gameActive = false;
+            gameStatus.textContent = message;
+            gestureP1.textContent = "Partie terminée";
+            gestureP2.textContent = "Partie terminée";
+        }
+
+        // --- Analyse MediaPipe Multi-Mains ---
+        function onResults(results) {
+            if (!gameActive) return;
+
+            // Réinitialisation visuelle temporaire des statuts de détection si aucune main n'est présente
+            let p1Detected = false;
+            let p2Detected = false;
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                
+                // On boucle sur toutes les mains détectées à l'écran (jusqu'à 2)
+                for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+                    const landmarks = results.multiHandLandmarks[i];
+                    
+                    // Récupération de la position X du poignet pour savoir de quel côté elle se trouve.
+                    // Important : Comme la vidéo a un effet miroir visuel (scaleX(-1)), 
+                    // la partie GAUCHE de l'écran affiché correspond aux valeurs X supérieures à 0.5 dans le flux brut de la caméra.
+                    const wristX = landmarks[0].x;
+                    const isLeftZone = wristX > 0.5; 
+
+                    // Vérification si les doigts sont fermés (comparaison du bout du doigt avec sa base)
+                    const isFingersClosed = 
+                        landmarks[8].y > landmarks[6].y &&
+                        landmarks[12].y > landmarks[10].y &&
+                        landmarks[16].y > landmarks[14].y &&
+                        landmarks[20].y > landmarks[18].y;
+
+                    if (isLeftZone) {
+                        // --- Logique Zone Joueur 1 (Gauche de l'écran) ---
+                        p1Detected = true;
+                        if (isFingersClosed) {
+                            p1HandWasClosed = true;
+                            gestureP1.textContent = "✊ Poing Chargé !";
+                            gestureP1.style.color = "#ffeb3b";
+                        } else if (p1HandWasClosed && !isFingersClosed) {
+                            p1HandWasClosed = false;
+                            gestureP1.textContent = "🖐️ Attaque Envoyée !";
+                            gestureP1.style.color = "#00bcd4";
+                            triggerAttack(1);
+                        }
+                    } else {
+                        // --- Logique Zone Joueur 2 (Droite de l'écran) ---
+                        p2Detected = true;
+                        if (isFingersClosed) {
+                            p2HandWasClosed = true;
+                            gestureP2.textContent = "✊ Poing Chargé !";
+                            gestureP2.style.color = "#ffeb3b";
+                        } else if (p2HandWasClosed && !isFingersClosed) {
+                            p2HandWasClosed = false;
+                            gestureP2.textContent = "🖐️ Attaque Envoyée !";
+                            gestureP2.style.color = "#ff5722";
+                            triggerAttack(2);
+                        }
+                    }
+                }
+            }
+
+            // Mettre à jour l'affichage si un joueur retire sa main de l'écran
+            if (!p1Detected) {
+                gestureP1.textContent = "En attente d'une main...";
+                gestureP1.style.color = "#a0a0c0";
+                p1HandWasClosed = false;
+            }
+            if (!p2Detected) {
+                gestureP2.textContent = "En attente d'une main...";
+                gestureP2.style.color = "#a0a0c0";
+                p2HandWasClosed = false;
+            }
+        }
+
+        // Configuration de l'API MediaPipe Hands pour gérer 2 mains simultanément
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 2, // Permet de détecter les deux joueurs en même temps
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults(onResults);
+
+        // Liaison et démarrage de la caméra sous Windows
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({ image: videoElement });
+            },
+            width: 640,
+            height: 480
+        });
+
+        camera.start()
+            .then(() => {
+                gameStatus.textContent = "Prêt ! Mettez-vous chacun d'un côté de la ligne.";
+                updateHealthBars();
+            })
+            .catch(err => {
+                console.error(err);
+                gameStatus.textContent = "Erreur : Impossible d'accéder à la webcam.";
+            });
+    </script>
+</body>
+</html>
